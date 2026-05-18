@@ -1,92 +1,78 @@
-import time
-import yfinance as yf
+import os
+import requests
 import pandas as pd
+from dotenv import load_dotenv
 from sec_scrape import get_financials_for_ticker
 
+load_dotenv()
+TIINGO_API_KEY = os.getenv("TIINGO_API_KEY")
 
 
-def _get_yf_ticker(ticker, retries=3, delay=3):
+def get_latest_price(ticker):
     """
-    Fetch ticker and verify it exists using yf.download (much more reliable).
-    Avoids Yahoo rate-limiting issues that break Ticker().history().
+    Fetch the most recent closing price for a ticker from Tiingo.
+
+    Args:
+        ticker (str): Stock ticker symbol (e.g. "AAPL").
+
+    Returns:
+        float: Latest closing price, or None if unavailable.
     """
-    for attempt in range(retries):
-        try:
-            df = yf.download(
-                ticker,
-                period="5d",        # small request reduces blocking
-                progress=False,
-                threads=False,      # VERY IMPORTANT: prevents throttling
-            )
-
-            if not df.empty:
-                return yf.Ticker(ticker)
-
-        except Exception:
-            pass
-
-        if attempt < retries - 1:
-            time.sleep(delay)
-
-    return None
-
+    try:
+        url = f"https://api.tiingo.com/tiingo/daily/{ticker.lower()}/prices"
+        response = requests.get(url, headers={"Authorization": f"Token {TIINGO_API_KEY}"})
+        response.raise_for_status()
+        data = response.json()
+        if not data:
+            return None
+        return float(data[0]["close"])
+    except Exception as e:
+        print(f"Error fetching price for {ticker}: {e}")
+        return None
 
 
 def get_market_data(ticker):
     """
-    Fetch market data from Yahoo Finance using stable endpoints.
+    Compute market data for a given ticker using Tiingo prices and SEC share counts.
+
+    Args:
+        ticker (str): Stock ticker symbol (e.g. "AAPL").
+
     Returns:
-        dict: market_cap, stock_price, shares_outstanding, beta
+        dict: stock_price, shares_outstanding, market_cap.
+              Values are None if unavailable.
     """
-    stock = _get_yf_ticker(ticker)
+    stock_price = get_latest_price(ticker)
 
-    if stock is None:
-        print(f"Could not fetch market data for {ticker}")
-        return {
-            "market_cap": None,
-            "stock_price": None,
-            "shares_outstanding": None,
-            "beta": None,
-        }
-
-    try:
-        price_df = yf.download(
-            ticker,
-            period="1d",
-            progress=False,
-            threads=False,
-        )
-        stock_price = float(price_df["Close"].iloc[-1])
-    except Exception:
-        stock_price = None
-
-    try:
-        shares_series = stock.get_shares_full()
-        shares = shares_series.iloc[-1]
-    except Exception:
+    financials = get_financials_for_ticker(ticker)
+    if financials.empty or "shares_outstanding" not in financials.columns:
         shares = None
+    else:
+        shares = financials["shares_outstanding"].iloc[-1]
+        shares = None if pd.isna(shares) else int(shares)
 
     market_cap = round(stock_price * shares) if stock_price and shares else None
 
-    try:
-        beta = stock.info.get("beta")
-    except Exception:
-        beta = None
-
     return {
-        "market_cap": market_cap,
         "stock_price": stock_price,
         "shares_outstanding": shares,
-        "beta": beta,
+        "market_cap": market_cap,
     }
 
 
 def get_enterprise_value(ticker):
     """
-    EV = Market Cap + Long Term Debt - Cash
-    Uses:
-        • Live market data (Yahoo)
-        • Latest annual balance sheet (SEC)
+    Compute Enterprise Value for a given ticker.
+
+    EV = market_cap + long_term_debt - cash
+
+    Uses Tiingo prices, SEC share counts, and SEC balance sheet data.
+
+    Args:
+        ticker (str): Stock ticker symbol (e.g. "AAPL").
+
+    Returns:
+        float: Enterprise value in USD, or None if any component is unavailable.
     """
     market_data = get_market_data(ticker)
     financials = get_financials_for_ticker(ticker)
@@ -106,14 +92,12 @@ def get_enterprise_value(ticker):
 
 
 if __name__ == "__main__":
-    print("\n--- Market Data ---")
-    market_data = get_market_data("MSFT")
-    print(market_data)
+    print("--- Market Data ---")
+    print(get_market_data("AAPL"))
 
     print("\n--- Enterprise Value ---")
-    ev = get_enterprise_value("MSFT")
-
+    ev = get_enterprise_value("AAPL")
     if ev:
-        print(f"MSFT EV: ${ev:,.0f}")
+        print(f"AAPL EV: ${ev:,.0f}")
     else:
-        print("MSFT EV: unavailable")
+        print("AAPL EV: unavailable")
