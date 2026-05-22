@@ -2,7 +2,7 @@ import os
 import requests
 import pandas as pd
 from dotenv import load_dotenv
-from sec_scrape import get_financials_for_ticker
+from .sec_scrape import get_financials_for_ticker
 
 load_dotenv()
 TIINGO_API_KEY = os.getenv("TIINGO_API_KEY")

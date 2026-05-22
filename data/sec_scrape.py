@@ -43,6 +43,8 @@ METRICS = {
     ],
     "shares_outstanding": [
         ("dei", "EntityCommonStockSharesOutstanding", "shares"),
+        ("us-gaap", "CommonStockSharesOutstanding", "shares"),
+        ("us-gaap", "WeightedAverageNumberOfSharesOutstandingBasic", "shares"),
     ],
 }
 
@@ -134,12 +136,14 @@ def get_company_financials(cik):
     combined = None
 
     for metric_name, candidates in METRICS.items():
+        best_df = pd.DataFrame()
         for taxonomy, tag, unit in candidates:
             df = extract_financial_metric(data, taxonomy, tag, unit)
             if not df.empty:
-                df = df.rename(columns={tag: metric_name})[["fiscal_year", metric_name]]
-                combined = df if combined is None else combined.merge(df, on="fiscal_year", how="outer")
-                break  # use first tag that returns data, ignore fallbacks
+                if best_df.empty or df["fiscal_year"].max() > best_df["fiscal_year"].max():
+                    best_df = df.rename(columns={tag: metric_name})[["fiscal_year", metric_name]]
+        if not best_df.empty:
+            combined = best_df if combined is None else combined.merge(best_df, on="fiscal_year", how="outer")
 
     if combined is None:
         return pd.DataFrame()
